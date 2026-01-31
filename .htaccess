@@ -1,0 +1,282 @@
+# ============================================
+# НАСТРОЙКИ БЕЗОПАСНОСТИ ДЛЯ KEY-MANAGER
+# ============================================
+
+# Включаем модуль rewrite
+RewriteEngine On
+
+# ============================================
+# 1. БЛОКИРОВКА КОНФИДЕНЦИАЛЬНЫХ ФАЙЛОВ
+# ============================================
+
+# Блокируем файлы по расширению (Apache 2.2 стиль)
+<FilesMatch "\.(env|config|ini|log|sql|bak|backup|swp|swo|tmp)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Блокируем конкретные файлы через RewriteRule
+RewriteRule ^(config\.php|init_db\.php|\.env|\.git|composer\.(json|lock))$ - [F,L,NC]
+
+# Блокируем все скрытые файлы (начинающиеся с точки)
+RewriteRule ^\. - [F,L]
+
+# Блокируем доступ к .ht* файлам
+<Files ~ "^\.ht">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# ============================================
+# 2. ЗАПРЕТ ЛИСТИНГА ДИРЕКТОРИЙ
+# ============================================
+
+Options -Indexes
+
+# Кастомная страница для листинга директорий
+IndexIgnore *
+
+# ============================================
+# 3. ЗАЩИТА ОТ SQL-ИНЪЕКЦИЙ И XSS
+# ============================================
+
+# Блокируем опасные символы в query string
+RewriteCond %{QUERY_STRING} (;|<|>|'|"|\)|%0A|%0D|%22|%27|%3C|%3E|%00) [NC,OR]
+RewriteCond %{QUERY_STRING} (\<|%3C).*script.*(\>|%3E) [NC,OR]
+RewriteCond %{QUERY_STRING} GLOBALS(=|\[|\%[0-9A-Z]) [OR]
+RewriteCond %{QUERY_STRING} _REQUEST(=|\[|\%[0-9A-Z]) [OR]
+
+# Блокируем SQL инъекции
+RewriteCond %{QUERY_STRING} (union|select|insert|update|delete|drop|create|alter) [NC,OR]
+RewriteCond %{QUERY_STRING} (--|\#|\/\*) [NC,OR]
+
+# Блокируем path traversal
+RewriteCond %{QUERY_STRING} (\.\.\/|\.\.\\|\.\.%2f|\.\.%5c) [NC,OR]
+
+# Блокируем shell команды
+RewriteCond %{QUERY_STRING} (eval\(|system\(|shell_exec\(|exec\(|passthru\() [NC]
+
+# Если найдено совпадение - запрещаем доступ
+RewriteRule ^(.*)$ - [F,L]
+
+# ============================================
+# 4. ЗАЩИТА ОТ RFI/LFI (УДАЛЕННОЕ ВКЛЮЧЕНИЕ ФАЙЛОВ)
+# ============================================
+
+# Блокируем включение внешних файлов
+RewriteCond %{QUERY_STRING} (http|https|ftp):\/\/ [NC,OR]
+RewriteCond %{QUERY_STRING} (php|php[0-9]|phtml|phps):\/\/ [NC]
+
+# Блокируем path traversal в URL
+RewriteCond %{REQUEST_URI} (\.\.|~|\.(php[0-9]?|phtml|phps)) [NC]
+
+# Блокируем доступ к php файлам кроме index.php и admin.php
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteCond %{REQUEST_URI} !^/(index\.php|admin\.php|create_key\.php|logout\.php)
+RewriteRule \.php$ - [F,L]
+
+# ============================================
+# 5. БЕЗОПАСНЫЕ ЗАГОЛОВКИ
+# ============================================
+
+<IfModule mod_headers.c>
+    # Защита от MIME-sniffing
+    Header set X-Content-Type-Options "nosniff"
+    
+    # Защита от кликджекинга
+    Header set X-Frame-Options "DENY"
+    
+    # Защита от XSS
+    Header set X-XSS-Protection "1; mode=block"
+    
+    # Content Security Policy
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+    
+    # Referrer Policy
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    
+    # Feature Policy (устарело, но для совместимости)
+    Header set Feature-Policy "camera 'none'; microphone 'none'; geolocation 'none'"
+    
+    # Блокировка кеширования конфиденциальных страниц
+    <FilesMatch "\.(php)$">
+        Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+        Header set Pragma "no-cache"
+        Header set Expires "Thu, 01 Jan 1970 00:00:00 GMT"
+    </FilesMatch>
+</IfModule>
+
+# ============================================
+# 6. КОНТРОЛЬ ДОСТУПА К ФАЙЛАМ
+# ============================================
+
+# Разрешаем только определенные типы файлов
+<FilesMatch "\.(php|css|js|png|jpg|jpeg|gif|ico|svg|webp|woff|woff2|ttf|eot)$">
+    Order Allow,Deny
+    Allow from all
+</FilesMatch>
+
+# Блокируем исполняемые файлы
+<FilesMatch "\.(exe|sh|bat|cmd|pl|cgi)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# ============================================
+# 7. НАСТРОЙКИ PHP (если поддерживается)
+# ============================================
+
+<IfModule mod_php.c>
+    # Отключаем вывод ошибок на продакшене
+    php_flag display_errors off
+    php_flag log_errors on
+    php_value error_log logs/php_errors.log
+    
+    # Максимальный размер загружаемых файлов
+    php_value upload_max_filesize 2M
+    php_value post_max_size 4M
+    
+    # Безопасные сессии
+    php_flag session.use_strict_mode on
+    php_flag session.use_only_cookies on
+    php_flag session.cookie_httponly on
+    php_flag session.cookie_secure on
+    
+    # Время жизни сессии (8 часов)
+    php_value session.gc_maxlifetime 28800
+    
+    # Защита от session fixation
+    php_flag session.use_trans_sid off
+    
+    # Отключаем глобальные переменные
+    php_flag register_globals off
+    
+    # Защита от переполнения
+    php_value max_input_time 60
+    php_value max_execution_time 30
+</IfModule>
+
+# ============================================
+# 8. ПРАВИЛА ПЕРЕНАПРАВЛЕНИЯ
+# ============================================
+
+# Разрешаем прямой доступ к существующим файлам
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule \.(php|css|js|png|jpg|jpeg|gif|ico|svg)$ - [L]
+
+# Разрешаем доступ к index.php, admin.php, create_key.php, logout.php
+RewriteRule ^(index|admin|create_key|logout)\.php$ - [L]
+
+# Все остальные запросы к .php файлам блокируем
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule \.php$ - [F,L]
+
+# Перенаправляем все остальное на index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L]
+
+# ============================================
+# 9. КОМПРЕССИЯ И КЕШИРОВАНИЕ
+# ============================================
+
+<IfModule mod_deflate.c>
+    # Включаем сжатие
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json
+    
+    # Исключаем старые браузеры
+    BrowserMatch ^Mozilla/4 gzip-only-text/html
+    BrowserMatch ^Mozilla/4\.0[678] no-gzip
+    BrowserMatch \bMSIE !no-gzip !gzip-only-text/html
+</IfModule>
+
+<IfModule mod_expires.c>
+    # Кеширование статических файлов
+    ExpiresActive On
+    
+    # Изображения
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType image/gif "access plus 1 year"
+    ExpiresByType image/svg+xml "access plus 1 year"
+    ExpiresByType image/webp "access plus 1 year"
+    ExpiresByType image/x-icon "access plus 1 year"
+    
+    # CSS и JavaScript
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType text/javascript "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+    
+    # Шрифты
+    ExpiresByType font/woff "access plus 1 year"
+    ExpiresByType font/woff2 "access plus 1 year"
+    ExpiresByType application/font-woff "access plus 1 year"
+    
+    # Остальное
+    ExpiresByType text/html "access plus 1 hour"
+</IfModule>
+
+# ============================================
+# 10. ПЕРЕНАПРАВЛЕНИЕ HTTP → HTTPS
+# ============================================
+
+# Раскомментируйте если используете HTTPS
+# RewriteCond %{HTTPS} off
+# RewriteCond %{HTTP:X-Forwarded-Proto} !https
+# RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+
+# ============================================
+# 11. БЛОКИРОВКА ВРЕДОНОСНЫХ USER AGENT
+# ============================================
+
+# Раскомментируйте при необходимости
+# SetEnvIfNoCase User-Agent "libwww-perl|wget|nikto|curl|scan|java|python" bad_bot
+# Deny from env=bad_bot
+
+# ============================================
+# 12. ЛОГИРОВАНИЕ ОШИБОК
+# ============================================
+
+# Настраиваем логирование ошибок
+ErrorDocument 400 /index.php
+ErrorDocument 401 /index.php
+ErrorDocument 403 /index.php
+ErrorDocument 404 /index.php
+ErrorDocument 500 /index.php
+
+# ============================================
+# 13. ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА
+# ============================================
+
+# Защита от hotlinking изображений
+# RewriteCond %{HTTP_REFERER} !^$
+# RewriteCond %{HTTP_REFERER} !^https?://(www\.)?ваш-сайт\.com [NC]
+# RewriteRule \.(jpg|jpeg|png|gif)$ - [F,L]
+
+# Блокировка по IP (пример)
+# Deny from 123.45.67.89
+# Deny from 192.168.1.0/24
+
+# ============================================
+# 14. НАСТРОЙКИ ДЛЯ RENDER
+# ============================================
+
+# Указываем индексный файл
+DirectoryIndex index.php
+
+# Настраиваем часовой пояс (для PHP через .htaccess)
+SetEnv TZ Europe/Moscow
+
+# Увеличиваем лимиты для Render
+<IfModule mod_php.c>
+    php_value memory_limit 128M
+    php_value max_execution_time 120
+    php_value max_input_time 120
+</IfModule>
+
+# ============================================
+# КОНЕЦ ФАЙЛА .htaccess
+# ============================================
+
+# Важно: Этот файл должен быть в кодировке UTF-8 без BOM
+# Сохраните как .htaccess (без расширения .txt)
